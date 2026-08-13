@@ -19,6 +19,7 @@ import io.legado.app.help.http.CookieStore
 import io.legado.app.help.http.SSLHelper
 import io.legado.app.help.http.StrResponse
 import io.legado.app.help.source.SourceVerificationHelp
+import io.legado.app.help.source.SourceAccountRequiredHelp
 import io.legado.app.model.Debug
 import io.legado.app.model.analyzeRule.AnalyzeUrl
 import io.legado.app.model.analyzeRule.QueryTTF
@@ -945,7 +946,9 @@ interface JsExtensions : JsEncodeUtils {
      */
     fun toast(msg: Any?) {
         rhinoContext.ensureActive()
-        appCtx.toastOnUi("${getSource()?.getTag()}: ${msg.toString()}")
+        val message = msg.toString()
+        SourceAccountRequiredHelp.quarantine(getSource(), message)
+        appCtx.toastOnUi("${getSource()?.getTag()}: $message")
     }
 
     /**
@@ -953,7 +956,9 @@ interface JsExtensions : JsEncodeUtils {
      */
     fun longToast(msg: Any?) {
         rhinoContext.ensureActive()
-        appCtx.longToastOnUi("${getSource()?.getTag()}: ${msg.toString()}")
+        val message = msg.toString()
+        SourceAccountRequiredHelp.quarantine(getSource(), message)
+        appCtx.longToastOnUi("${getSource()?.getTag()}: $message")
     }
 
     /**

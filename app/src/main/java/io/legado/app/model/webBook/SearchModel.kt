@@ -9,6 +9,8 @@ import io.legado.app.data.entities.SearchBook
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.book.releaseHtmlData
 import io.legado.app.help.config.AppConfig
+import io.legado.app.help.source.SourceAccountRequiredHelp
+import io.legado.app.help.source.SourceVerificationHelp
 import io.legado.app.model.analyzeRule.AnalyzeUrl
 import io.legado.app.ui.book.search.SearchScope
 import io.legado.app.utils.getPrefBoolean
@@ -19,10 +21,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
@@ -31,10 +31,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import splitties.init.appCtx
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
 
 class SearchModel(private val scope: CoroutineScope, private val callBack: CallBack) {
-    val threadCount = AppConfig.threadCount
+    val threadCount = AppConfig.searchConcurrency
     private var searchPool: ExecutorCoroutineDispatcher? = null
     private var mSearchId = 0L
     private var searchPage = 1
@@ -42,7 +43,6 @@ class SearchModel(private val scope: CoroutineScope, private val callBack: CallB
     private var bookSources = emptyList<BookSource>()
     private var searchBooks = arrayListOf<SearchBook>()
     private var searchJob: Job? = null
-    private var workingState = MutableStateFlow(true)
 
     private fun initSearchPool(): ExecutorCoroutineDispatcher {
         return Executors
@@ -77,123 +77,113 @@ class SearchModel(private val scope: CoroutineScope, private val callBack: CallB
         val precision = appCtx.getPrefBoolean(PreferKey.precisionSearch)
         var hasMore = false
         val pool = searchPool ?: return
-        val isSingleSource = bookSources.size == 1
-        val selectedOptions = callBack.getSearchOptions().associate { it.name to it.selectedValue }
-        searchJob = scope.launch(pool) {
-            flow {
-                bookSources.forEach { source ->
-                    emit(source)
-                    workingState.first { it }
-                }
-            }.onStart {
-                callBack.onSearchStart()
-            }.mapParallelSafe(threadCount, bookSources.size) { bookSource ->
-                withTimeout(timeLimit) {
-                    WebBook.getBookListAwait(
-                        bookSource, searchKey, searchPage,
-                        filter = { name, author ->
-                            !precision || name.contains(searchKey) ||
-                                author.contains(searchKey)
-                        },
-                        onUrlResolved = if (isSingleSource) { analyzeUrl: AnalyzeUrl ->
-                            val options = parseExploreOptionsFromUrl(analyzeUrl.rawRuleUrl)
-                            if (options.isNotEmpty()) {
-                                callBack.onSearchOptionsResolved(options)
-                            }
-                        } else null,
-                        selectedOptions = selectedOptions
-                    )
-                }
-            }.onEach { items ->
-                for (book in items) {
-                    book.releaseHtmlData()
-                }
-                hasMore = hasMore || items.isNotEmpty()
-                mergeItems(items, precision)
-                currentCoroutineContext().ensureActive()
-                callBack.onSearchSuccess(searchBooks)
-            }.onCompletion {
-                if (it == null) callBack.onSearchFinish(searchBooks.isEmpty(), hasMore)
-            }.catch {
-                AppLog.put("书源搜索出错\n${it.localizedMessage}", it)
-                callBack.onSearchCancel(it)
-            }.collect()
+        val activeSources = bookSources.filter { it.enabled }
+        if (activeSources.isEmpty()) {
+            callBack.onSearchCancel(NoStackTraceException("启用书源为空"))
+            return
         }
+        val completedSources = AtomicInteger()
+        val totalSources = activeSources.size
+        val isSingleSource = totalSources == 1
+        val selectedOptions = callBack.getSearchOptions().associate { it.name to it.selectedValue }
+        SourceVerificationHelp.beginSearchSession()
+        searchJob = scope.launch(pool) {
+            try {
+                flow {
+                    activeSources.forEach { emit(it) }
+                }.onStart {
+                    callBack.onSearchStart()
+                    callBack.onSearchProgress(0, totalSources)
+                }.mapParallelSafe(threadCount, totalSources) { bookSource ->
+                    try {
+                        withTimeout(timeLimit) {
+                            WebBook.getBookListAwait(
+                                bookSource, searchKey, searchPage,
+                                filter = { name, author ->
+                                    !precision || name.contains(searchKey) ||
+                                        author.contains(searchKey)
+                                },
+                                onUrlResolved = if (isSingleSource) { analyzeUrl: AnalyzeUrl ->
+                                    val options = parseExploreOptionsFromUrl(analyzeUrl.rawRuleUrl)
+                                    if (options.isNotEmpty()) {
+                                        callBack.onSearchOptionsResolved(options)
+                                    }
+                                } else null,
+                                selectedOptions = selectedOptions
+                            )
+                        }
+                    } catch (error: Throwable) {
+                        currentCoroutineContext().ensureActive()
+                        quarantineSourceWhenRequired(bookSource, error)
+                        throw error
+                    } finally {
+                        callBack.onSearchProgress(
+                            completedSources.incrementAndGet(),
+                            totalSources
+                        )
+                    }
+                }.onEach { items ->
+                    for (book in items) {
+                        book.releaseHtmlData()
+                    }
+                    hasMore = hasMore || items.isNotEmpty()
+                    mergeItems(items, precision)
+                    currentCoroutineContext().ensureActive()
+                    callBack.onSearchSuccess(searchBooks)
+                }.onCompletion {
+                    if (it == null) callBack.onSearchFinish(searchBooks.isEmpty(), hasMore)
+                }.catch {
+                    AppLog.put("书源搜索出错\n${it.localizedMessage}", it)
+                    callBack.onSearchCancel(it)
+                }.collect()
+            } finally {
+                SourceVerificationHelp.endSearchSession()
+            }
+        }
+    }
+
+    private fun quarantineSourceWhenRequired(source: BookSource, error: Throwable) {
+        val message = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" ")
+        SourceAccountRequiredHelp.quarantine(source, message)
     }
 
     private suspend fun mergeItems(newDataS: List<SearchBook>, precision: Boolean) {
-        if (newDataS.isNotEmpty()) {
-            val copyData = ArrayList(searchBooks)
-            val equalData = arrayListOf<SearchBook>()
-            val containsData = arrayListOf<SearchBook>()
-            val otherData = arrayListOf<SearchBook>()
-            copyData.forEach {
-                currentCoroutineContext().ensureActive()
-                if ((it.name == searchKey) || (it.author == searchKey)) {
-                    equalData.add(it)
-                } else if (it.name.contains(searchKey) || it.author.contains(searchKey)) {
-                    containsData.add(it)
-                } else {
-                    otherData.add(it)
-                }
-            }
-            newDataS.forEach { nBook ->
-                currentCoroutineContext().ensureActive()
-                if ((nBook.name == searchKey) || (nBook.author == searchKey)) {
-                    var hasSame = false
-                    equalData.forEach { pBook ->
-                        currentCoroutineContext().ensureActive()
-                        if ((pBook.name == nBook.name) && (pBook.author == nBook.author)) {
-                            pBook.addOrigin(nBook.origin)
-                            hasSame = true
-                        }
-                    }
-                    if (!hasSame) {
-                        equalData.add(nBook)
-                    }
-                } else if (nBook.name.contains(searchKey) || nBook.author.contains(searchKey)) {
-                    var hasSame = false
-                    containsData.forEach { pBook ->
-                        currentCoroutineContext().ensureActive()
-                        if ((pBook.name == nBook.name) && (pBook.author == nBook.author)) {
-                            pBook.addOrigin(nBook.origin)
-                            hasSame = true
-                        }
-                    }
-                    if (!hasSame) {
-                        containsData.add(nBook)
-                    }
-                } else if (!precision) {
-                    var hasSame = false
-                    otherData.forEach { pBook ->
-                        currentCoroutineContext().ensureActive()
-                        if ((pBook.name == nBook.name) && (pBook.author == nBook.author)) {
-                            pBook.addOrigin(nBook.origin)
-                            hasSame = true
-                        }
-                    }
-                    if (!hasSame) {
-                        otherData.add(nBook)
-                    }
-                }
-            }
+        if (newDataS.isEmpty()) return
+
+        val equalData = LinkedHashMap<Pair<String, String>, SearchBook>()
+        val containsData = LinkedHashMap<Pair<String, String>, SearchBook>()
+        val otherData = LinkedHashMap<Pair<String, String>, SearchBook>()
+
+        suspend fun merge(book: SearchBook, mergeOrigin: Boolean) {
             currentCoroutineContext().ensureActive()
-            equalData.sortByDescending { it.origins.size }
-            equalData.addAll(containsData.sortedByDescending { it.origins.size })
-            if (!precision) {
-                equalData.addAll(otherData)
+            val target = when {
+                book.name == searchKey || book.author == searchKey -> equalData
+                book.name.contains(searchKey) || book.author.contains(searchKey) -> containsData
+                !precision -> otherData
+                else -> return
             }
-            currentCoroutineContext().ensureActive()
-            searchBooks = equalData
+            val key = book.name to book.author
+            val previous = target[key]
+            if (previous == null) {
+                target[key] = book
+            } else if (mergeOrigin) {
+                previous.addOrigin(book.origin)
+            }
         }
-    }
 
-    fun pause() {
-        workingState.value = false
-    }
+        searchBooks.forEach { merge(it, false) }
+        newDataS.forEach { merge(it, true) }
+        currentCoroutineContext().ensureActive()
 
-    fun resume() {
-        workingState.value = true
+        searchBooks = ArrayList<SearchBook>(
+            equalData.size + containsData.size + if (precision) 0 else otherData.size
+        ).apply {
+            addAll(equalData.values.sortedByDescending { it.origins.size })
+            addAll(containsData.values.sortedByDescending { it.origins.size })
+            if (!precision) addAll(otherData.values)
+        }
     }
 
     fun cancelSearch() {
@@ -211,6 +201,7 @@ class SearchModel(private val scope: CoroutineScope, private val callBack: CallB
     interface CallBack {
         fun getSearchScope(): SearchScope
         fun onSearchStart()
+        fun onSearchProgress(completed: Int, total: Int)
         fun onSearchSuccess(searchBooks: List<SearchBook>)
         fun onSearchFinish(isEmpty: Boolean, hasMore: Boolean)
         fun onSearchCancel(exception: Throwable? = null)

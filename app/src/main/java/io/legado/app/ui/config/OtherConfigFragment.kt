@@ -68,6 +68,7 @@ class OtherConfigFragment : PreferenceFragment(),
         upPreferenceSummary(PreferKey.userAgent, AppConfig.userAgent)
         upPreferenceSummary(PreferKey.preDownloadNum, AppConfig.preDownloadNum.toString())
         upPreferenceSummary(PreferKey.threadCount, AppConfig.threadCount.toString())
+        upPreferenceSummary(PreferKey.searchConcurrency, AppConfig.searchConcurrency.toString())
         upPreferenceSummary(PreferKey.webPort, AppConfig.webPort.toString())
         AppConfig.defaultBookTreeUri?.let {
             upPreferenceSummary(PreferKey.defaultBookTreeUri, it)
@@ -112,6 +113,14 @@ class OtherConfigFragment : PreferenceFragment(),
                 AppConfig.threadCount = it
             }
 
+            PreferKey.searchConcurrency -> showNumberPicker(
+                requireContext(),
+                titleResId = R.string.search_concurrency,
+                max = 64, min = 1, value = AppConfig.searchConcurrency
+            ) {
+                AppConfig.searchConcurrency = it
+            }
+
             PreferKey.webPort -> showNumberPicker(
                 requireContext(),
                 titleResId = R.string.web_port_title,
@@ -150,6 +159,10 @@ class OtherConfigFragment : PreferenceFragment(),
             PreferKey.threadCount -> {
                 upPreferenceSummary(key, AppConfig.threadCount.toString())
                 postEvent(PreferKey.threadCount, "")
+            }
+
+            PreferKey.searchConcurrency -> {
+                upPreferenceSummary(key, AppConfig.searchConcurrency.toString())
             }
 
             PreferKey.webPort -> {
@@ -207,6 +220,8 @@ class OtherConfigFragment : PreferenceFragment(),
                 getString(R.string.pre_download_s, value)
 
             PreferKey.threadCount -> preference.summary = getString(R.string.threads_num, value)
+            PreferKey.searchConcurrency -> preference.summary =
+                getString(R.string.search_concurrency_value, value)
             PreferKey.webPort -> preference.summary = getString(R.string.web_port_summary, value)
             PreferKey.bitmapCacheSize -> preference.summary =
                 getString(R.string.bitmap_cache_size_summary, value)

@@ -10,6 +10,9 @@ import io.legado.app.ui.browser.WebViewActivity
 import io.legado.app.utils.isMainThread
 import io.legado.app.utils.startActivity
 import splitties.init.appCtx
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kotlin.time.Duration.Companion.minutes
 
@@ -19,6 +22,10 @@ import kotlin.time.Duration.Companion.minutes
 object SourceVerificationHelp {
 
     private val waitTime = 1.minutes.inWholeNanoseconds
+    private val verificationStateLock = Any()
+    private val activeVerification = AtomicReference<String?>(null)
+    private val activeSearchSessions = AtomicInteger()
+    private val verificationShownDuringSearch = AtomicBoolean()
 
     private fun getVerificationResultKey(source: BaseSource) =
         getVerificationResultKey(source.getKey())
@@ -29,7 +36,6 @@ object SourceVerificationHelp {
      * 获取书源验证结果
      * 图片验证码 防爬 滑动验证码 点击字符 等等
      */
-    @Synchronized
     fun getVerificationResult(
         source: BaseSource?,
         url: String,
@@ -42,36 +48,78 @@ object SourceVerificationHelp {
         require(url.length < 64 * 1024) { "getVerificationResult parameter url too long" }
         check(!isMainThread) { "getVerificationResult must be called on a background thread" }
 
-        clearResult(source.getKey())
+        val sourceKey = source.getKey()
+        val ownsVerification = acquireVerification(sourceKey)
+        if (!ownsVerification) {
+            AppLog.putDebug("已有书源处于人机验证，已跳过: ${source.getTag()}")
+            throw NoStackTraceException("已有书源处于人机验证，已跳过当前书源")
+        }
 
-        if (!useBrowser) {
-            VerificationCodeDialog.display(
-                url,
-                source.getKey(),
-                source.getTag(),
-                source.getSourceType()
-            )
+        try {
+            clearResult(sourceKey)
             IntentData.put(getVerificationResultKey(source), Thread.currentThread())
-        } else {
-            startBrowser(source, url, title, true, refetchAfterSuccess)
-        }
 
-        var waitUserInput = false
-        while (getResult(source.getKey()) == null) {
-            if (!waitUserInput) {
-                AppLog.putDebug("等待返回验证结果...")
-                waitUserInput = true
+            if (!useBrowser) {
+                VerificationCodeDialog.display(
+                    url,
+                    sourceKey,
+                    source.getTag(),
+                    source.getSourceType()
+                )
+            } else {
+                startBrowser(source, url, title, true, refetchAfterSuccess)
             }
-            LockSupport.parkNanos(this, waitTime)
+
+            var waitUserInput = false
+            while (getResult(sourceKey) == null) {
+                if (!waitUserInput) {
+                    AppLog.putDebug("等待返回验证结果...")
+                    waitUserInput = true
+                }
+                LockSupport.parkNanos(this, waitTime)
+            }
+
+            val result = getResult(sourceKey)!!
+            clearResult(sourceKey)
+            result.ifBlank {
+                throw NoStackTraceException("验证结果为空")
+            }
+
+            return result
+        } finally {
+            synchronized(verificationStateLock) {
+                activeVerification.compareAndSet(sourceKey, null)
+            }
+        }
+    }
+
+    private fun acquireVerification(sourceKey: String): Boolean =
+        synchronized(verificationStateLock) {
+            if (activeVerification.get() != null) {
+                return@synchronized false
+            }
+            if (activeSearchSessions.get() > 0 && verificationShownDuringSearch.get()) {
+                return@synchronized false
+            }
+            activeVerification.set(sourceKey)
+            if (activeSearchSessions.get() > 0) {
+                verificationShownDuringSearch.set(true)
+            }
+            true
         }
 
-        val result = getResult(source.getKey())!!
-        clearResult(source.getKey())
-        result.ifBlank {
-            throw NoStackTraceException("验证结果为空")
+    fun beginSearchSession() = synchronized(verificationStateLock) {
+        if (activeSearchSessions.incrementAndGet() == 1) {
+            verificationShownDuringSearch.set(false)
         }
+    }
 
-        return result
+    fun endSearchSession() = synchronized(verificationStateLock) {
+        val remaining = activeSearchSessions.decrementAndGet()
+        if (remaining <= 0) {
+            activeSearchSessions.set(0)
+            verificationShownDuringSearch.set(false)
+        }
     }
 
     /**
@@ -95,7 +143,6 @@ object SourceVerificationHelp {
             putExtra("sourceType", source.getSourceType())
             putExtra("sourceVerificationEnable", saveResult)
             putExtra("refetchAfterSuccess", refetchAfterSuccess)
-            IntentData.put(getVerificationResultKey(source), Thread.currentThread())
         }
     }
 

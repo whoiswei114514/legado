@@ -4,10 +4,16 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
+import android.view.MotionEvent
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.addCallback
 import androidx.activity.viewModels
 import androidx.core.view.size
@@ -39,8 +45,15 @@ class WebViewActivity : VMBaseActivity<ActivityWebViewBinding, WebViewModel>() {
     private lateinit var chromeClient: CommonWebChromeClient
     private var webPic: String? = null
     private var isCloudflareChallenge = false
+    private var hadCloudflareChallenge = false
     private var isFullScreen = false
     private var checking = false
+    private val verificationTimeoutHandler = Handler(Looper.getMainLooper())
+    private val skipVerification = Runnable {
+        if (isCloudflareChallenge && viewModel.sourceVerificationEnable && !isFinishing) {
+            binding.titleBar.menu.findItem(R.id.menu_ok)?.let(::onCompatOptionsItemSelected)
+        }
+    }
     private val saveImage by lazy {
         registerHandleFile { result ->
             result.uri?.let { uri ->
@@ -203,8 +216,32 @@ class WebViewActivity : VMBaseActivity<ActivityWebViewBinding, WebViewModel>() {
     }
 
     override fun onDestroy() {
+        verificationTimeoutHandler.removeCallbacks(skipVerification)
+        binding.webView.apply {
+            stopLoading()
+            webChromeClient = null
+            webViewClient = WebViewClient()
+            (parent as? ViewGroup)?.removeView(this)
+            removeAllViews()
+            destroy()
+        }
         super.onDestroy()
-        binding.webView.destroy()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        resetAutomaticSkipTimer()
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        resetAutomaticSkipTimer()
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun resetAutomaticSkipTimer() {
+        if (!isCloudflareChallenge || !viewModel.sourceVerificationEnable) return
+        verificationTimeoutHandler.removeCallbacks(skipVerification)
+        verificationTimeoutHandler.postDelayed(skipVerification, 15_000L)
     }
 
     inner class CustomWebViewClient : BaseWebViewClient() {
@@ -214,6 +251,8 @@ class WebViewActivity : VMBaseActivity<ActivityWebViewBinding, WebViewModel>() {
 
         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
             super.onPageStarted(view, url, favicon)
+            isCloudflareChallenge = false
+            verificationTimeoutHandler.removeCallbacks(skipVerification)
             if (viewModel.isLogin) {
                 val cookieManager = CookieManager.getInstance()
                 cookieManager.getCookie(url)?.let {
@@ -232,24 +271,54 @@ class WebViewActivity : VMBaseActivity<ActivityWebViewBinding, WebViewModel>() {
                 }
             }
             if (checking) finish()
-            view?.title?.let { title ->
+            view ?: return
+            view.title?.let { title ->
                 if (title != url && title != view.url && title.isNotBlank()) {
                     binding.titleBar.title = title
                 } else {
                     binding.titleBar.title = intent.getStringExtra("title")
                 }
-                view.evaluateJavascript("!!window._cf_chl_opt") {
-                    if (it == "true") {
-                        isCloudflareChallenge = true
-                    } else if (isCloudflareChallenge && viewModel.sourceVerificationEnable) {
-                        viewModel.saveVerificationResult(binding.webView) {
-                            finish()
-                        }
+            }
+            view.evaluateJavascript(cloudflareChallengeDetectionScript) {
+                if (it == "true") {
+                    isCloudflareChallenge = true
+                    hadCloudflareChallenge = true
+                    resetAutomaticSkipTimer()
+                } else if (hadCloudflareChallenge && viewModel.sourceVerificationEnable) {
+                    hadCloudflareChallenge = false
+                    verificationTimeoutHandler.removeCallbacks(skipVerification)
+                    viewModel.saveVerificationResult(binding.webView) {
+                        finish()
                     }
                 }
             }
         }
 
+    }
+
+    companion object {
+        private val cloudflareChallengeDetectionScript =
+            """
+            (function() {
+                var title = (document.title || '').toLowerCase();
+                var body = document.body;
+                var text = ((body && body.innerText) || '').toLowerCase();
+                var challengeElement = document.querySelector(
+                    'iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"], ' +
+                    '.cf-turnstile, #challenge-form, [id^="cf-chl-"], [class*="cf-chl-"]'
+                );
+                var challengeTitle = title.indexOf('attention required') >= 0 ||
+                    title.indexOf('just a moment') >= 0 ||
+                    title.indexOf('sorry, you have been blocked') >= 0;
+                var cloudflareMessage = text.indexOf('cloudflare') >= 0 && (
+                    text.indexOf('verify you are human') >= 0 ||
+                    text.indexOf('checking your browser') >= 0 ||
+                    text.indexOf('attention required') >= 0 ||
+                    text.indexOf('sorry, you have been blocked') >= 0
+                );
+                return !!window._cf_chl_opt || !!challengeElement || challengeTitle || cloudflareMessage;
+            })()
+            """.trimIndent()
     }
 
 }

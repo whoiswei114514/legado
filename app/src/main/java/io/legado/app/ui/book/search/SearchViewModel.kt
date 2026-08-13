@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.LiveData
 import androidx.lifecycle.viewModelScope
 import io.legado.app.base.BaseViewModel
 import io.legado.app.constant.AppLog
@@ -29,6 +30,8 @@ class SearchViewModel(application: Application) : BaseViewModel(application) {
     val searchScope: SearchScope = SearchScope(AppConfig.searchScope)
     var searchFinishLiveData = MutableLiveData<Boolean>()
     var isSearchLiveData = MutableLiveData<Boolean>()
+    private val _searchProgressLiveData = MutableLiveData<SearchProgress>()
+    val searchProgressLiveData: LiveData<SearchProgress> = _searchProgressLiveData
     val searchOptionsLiveData = MutableLiveData<Unit>()
     var searchKey: String = ""
     var hasMore = true
@@ -42,6 +45,10 @@ class SearchViewModel(application: Application) : BaseViewModel(application) {
 
         override fun onSearchStart() {
             isSearchLiveData.postValue(true)
+        }
+
+        override fun onSearchProgress(completed: Int, total: Int) {
+            _searchProgressLiveData.postValue(SearchProgress(completed, total))
         }
 
         override fun onSearchSuccess(searchBooks: List<SearchBook>) {
@@ -146,14 +153,6 @@ class SearchViewModel(application: Application) : BaseViewModel(application) {
         searchModel.cancelSearch()
     }
 
-    fun pause() {
-        searchModel.pause()
-    }
-
-    fun resume() {
-        searchModel.resume()
-    }
-
     /**
      * 保存搜索关键字
      */
@@ -188,3 +187,5 @@ class SearchViewModel(application: Application) : BaseViewModel(application) {
     }
 
 }
+
+data class SearchProgress(val completed: Int, val total: Int)

@@ -267,6 +267,23 @@ object AppConfig : SharedPreferences.OnSharedPreferenceChangeListener {
             appCtx.putPrefInt(PreferKey.threadCount, value)
         }
 
+    var searchConcurrency: Int
+        get() = appCtx.getPrefInt(PreferKey.searchConcurrency, 8).coerceIn(1, 64)
+        set(value) = appCtx.putPrefInt(PreferKey.searchConcurrency, value.coerceIn(1, 64))
+
+    val captchaAiEnabled: Boolean
+        get() = appCtx.getPrefBoolean(PreferKey.captchaAiEnabled, false)
+
+    val captchaAiApiKey: String
+        get() = appCtx.getPrefString(PreferKey.captchaAiApiKey, "") ?: ""
+
+    val captchaAiModel: String
+        get() = appCtx.getPrefString(PreferKey.captchaAiModel, "mimo-v2.5") ?: "mimo-v2.5"
+
+    val captchaAiBaseUrl: String
+        get() = appCtx.getPrefString(PreferKey.captchaAiBaseUrl, "https://api.xiaomimimo.com/v1")
+            ?: "https://api.xiaomimimo.com/v1"
+
     var remoteServerId: Long
         get() = appCtx.getPrefLong(PreferKey.remoteServerId)
         set(value) {

@@ -1292,4 +1292,14 @@
     <string name="enable_dangerous_api">Dangerous API</string>
     <string name="enable_dangerous_api_confirm">Warning: Allowing unknown sources to use dangerous APIs can cause unpredictable results. In the worst case, it may lead to app data being cleared or leaked, and locally accessible files being exposed. Please make sure you have audited the code and trust the source, otherwise do not enable this.</string>
     <string name="dev_feat_summary">Enable some experimental features, such as 16:9 video thumbnails and direct access to the reading page with a click</string>
+    <string name="search_concurrency">Search concurrency</string>
+    <string name="search_concurrency_summary">Search multiple sources without a verification page blocking the others</string>
+    <string name="search_concurrency_value">Current search concurrency: %s</string>
+    <string name="captcha_ai_enabled">AI captcha recognition</string>
+    <string name="captcha_ai_enabled_summary">Recognize image captchas with an OpenAI-compatible vision model</string>
+    <string name="captcha_ai_api_key_summary">Stored only on this device; blank disables requests</string>
+    <string name="captcha_ai_model">Captcha model ID</string>
+    <string name="captcha_ai_recognizing">Recognizing captcha...</string>
+    <string name="captcha_ai_failed">Captcha recognition failed: %s</string>
+    <string name="search_source_progress">Searched %1$d/%2$d sources</string>
 </resources>

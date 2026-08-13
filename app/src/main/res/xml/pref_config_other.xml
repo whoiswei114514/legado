@@ -149,6 +149,37 @@
         android:title="@string/threads_num_title"
         app:iconSpaceReserved="false" />
 
+    <io.legado.app.lib.prefs.Preference
+        android:key="searchConcurrency"
+        android:summary="@string/search_concurrency_summary"
+        android:title="@string/search_concurrency"
+        app:iconSpaceReserved="false" />
+
+    <io.legado.app.lib.prefs.SwitchPreference
+        android:defaultValue="false"
+        android:key="captchaAiEnabled"
+        android:summary="@string/captcha_ai_enabled_summary"
+        android:title="@string/captcha_ai_enabled"
+        app:iconSpaceReserved="false" />
+
+    <EditTextPreference
+        android:key="captchaAiApiKey"
+        android:summary="@string/captcha_ai_api_key_summary"
+        android:title="API key"
+        app:useSimpleSummaryProvider="false" />
+
+    <EditTextPreference
+        android:defaultValue="mimo-v2.5"
+        android:key="captchaAiModel"
+        android:title="@string/captcha_ai_model"
+        app:useSimpleSummaryProvider="true" />
+
+    <EditTextPreference
+        android:defaultValue="https://api.xiaomimimo.com/v1"
+        android:key="captchaAiBaseUrl"
+        android:title="Base URL"
+        app:useSimpleSummaryProvider="true" />
+
     <io.legado.app.lib.prefs.SwitchPreference
         android:defaultValue="true"
         android:key="process_text"

@@ -234,6 +234,13 @@ fun flowSearch(searchKey: String, enabled: Boolean? = null): Flow<List<BookSourc
     @Query("update book_sources set enabled = :enable where bookSourceUrl = :bookSourceUrl")
     fun enable(bookSourceUrl: String, enable: Boolean)
 
+    @Query(
+        """update book_sources
+        set bookSourceGroup = :bookSourceGroup, enabled = 0
+        where bookSourceUrl = :bookSourceUrl"""
+    )
+    fun quarantine(bookSourceUrl: String, bookSourceGroup: String)
+
     @Query("update book_sources set enabled = :enable where bookSourceUrl in (:urls)")
     fun enableIn(urls: List<String>, enable: Boolean)
 

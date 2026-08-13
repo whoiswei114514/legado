@@ -1290,4 +1290,14 @@
     <string name="enable_dangerous_api_confirm">注意，允许未知来源的源使用高危API会造成无法预测的结果，最严重的情况下会导致软件数据被清除、泄露，本地可访问文件泄露等，请确保你审计代码并信任该源，否则请不要启用。</string>
     <string name="resolution">分辨率</string>
     <string name="dev_feat_summary">启用一些实验性特性，比如视频封面16：9，点击直接进入阅读页</string>
+    <string name="search_concurrency">搜索并发数</string>
+    <string name="search_concurrency_summary">同时搜索多个书源；验证码书源不会阻塞其他书源</string>
+    <string name="search_concurrency_value">当前搜索并发数 %s</string>
+    <string name="captcha_ai_enabled">AI 自动识别图片验证码</string>
+    <string name="captcha_ai_enabled_summary">调用兼容 OpenAI 的视觉模型识别并填入验证码</string>
+    <string name="captcha_ai_api_key_summary">仅保存在本机；留空时不调用</string>
+    <string name="captcha_ai_model">验证码模型 ID</string>
+    <string name="captcha_ai_recognizing">正在识别验证码...</string>
+    <string name="captcha_ai_failed">验证码识别失败：%s</string>
+    <string name="search_source_progress">已搜索 %1$d/%2$d 个书源</string>
 </resources>

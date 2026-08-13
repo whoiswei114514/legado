@@ -9,9 +9,7 @@ import android.widget.TextView
 import androidx.activity.viewModels
 import androidx.appcompat.widget.SearchView
 import androidx.core.view.isVisible
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.flexbox.FlexboxLayoutManager
@@ -61,7 +59,6 @@ import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
@@ -101,18 +98,34 @@ class SearchActivity : VMBaseActivity<ActivityBookSearchBinding, SearchViewModel
     private val inputHelpVisibleFlow = MutableStateFlow(true)
     private var precisionSearchMenuItem: MenuItem? = null
     private var isManualStopSearch = false
+    private var restoringAfterConfigurationChange = false
 
     override fun onActivityCreated(savedInstanceState: Bundle?) {
+        restoringAfterConfigurationChange = savedInstanceState != null
         initRecyclerView()
         initSearchView()
         initOtherView()
         initData()
-        receiptIntent(intent)
+        if (savedInstanceState == null) {
+            receiptIntent(intent)
+        } else {
+            restoreSearchAfterConfigurationChange()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         receiptIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        searchView.post {
+            if (viewModel.searchKey.isNotEmpty()) {
+                searchView.clearFocus()
+                visibleInputHelp(false)
+            }
+        }
     }
 
     override fun onCompatCreateOptionsMenu(menu: Menu): Boolean {
@@ -200,6 +213,7 @@ class SearchActivity : VMBaseActivity<ActivityBookSearchBinding, SearchViewModel
         searchView.queryHint = getString(R.string.search_book_key)
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
             override fun onQueryTextSubmit(query: String): Boolean {
+                if (restoringAfterConfigurationChange) return true
                 searchView.clearFocus()
                 query.trim().let { searchKey ->
                     isManualStopSearch = false
@@ -212,6 +226,7 @@ class SearchActivity : VMBaseActivity<ActivityBookSearchBinding, SearchViewModel
             }
 
             override fun onQueryTextChange(newText: String): Boolean {
+                if (restoringAfterConfigurationChange) return false
                 if (viewModel.isSearchLiveData.value == true) {
                     viewModel.stop()
                     binding.fbStartStop.invisible()
@@ -231,6 +246,19 @@ class SearchActivity : VMBaseActivity<ActivityBookSearchBinding, SearchViewModel
             }
         }
         visibleInputHelp(true)
+    }
+
+    private fun restoreSearchAfterConfigurationChange() {
+        searchView.post {
+            val key = viewModel.searchKey
+            if (key.isNotEmpty()) {
+                if (searchView.query.toString() != key) {
+                    searchView.setQuery(key, false)
+                }
+                visibleInputHelp(false)
+            }
+            restoringAfterConfigurationChange = false
+        }
     }
 
     private fun initRecyclerView() {
@@ -332,22 +360,21 @@ class SearchActivity : VMBaseActivity<ActivityBookSearchBinding, SearchViewModel
         viewModel.searchBookLiveData.observe(this) {
             adapter.setItems(it)
         }
+        viewModel.searchProgressLiveData.observe(this) {
+            binding.tvSearchProgress.text = getString(
+                R.string.search_source_progress,
+                it.completed,
+                it.total
+            )
+            binding.tvSearchProgress.isVisible =
+                viewModel.isSearchLiveData.value == true && it.total > 0
+        }
         viewModel.searchOptionsLiveData.observe(this) {
             initFilterView()
         }
         lifecycleScope.launch {
             appDb.bookSourceDao.flowEnabledGroups().collect {
                 groups = it
-            }
-        }
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                viewModel.resume()
-                try {
-                    awaitCancellation()
-                } finally {
-                    viewModel.pause()
-                }
             }
         }
         lifecycleScope.launch {
@@ -475,6 +502,14 @@ class SearchActivity : VMBaseActivity<ActivityBookSearchBinding, SearchViewModel
     private fun startSearch() {
         binding.refreshProgressBar.visible()
         binding.refreshProgressBar.isAutoLoading = true
+        viewModel.searchProgressLiveData.value?.let {
+            binding.tvSearchProgress.text = getString(
+                R.string.search_source_progress,
+                it.completed,
+                it.total
+            )
+            binding.tvSearchProgress.isVisible = it.total > 0
+        }
         binding.fbStartStop.setImageResource(R.drawable.ic_stop_black_24dp)
         binding.fbStartStop.visible()
     }
@@ -485,6 +520,7 @@ class SearchActivity : VMBaseActivity<ActivityBookSearchBinding, SearchViewModel
     private fun searchFinally() {
         binding.refreshProgressBar.isAutoLoading = false
         binding.refreshProgressBar.gone()
+        binding.tvSearchProgress.gone()
         if (!isManualStopSearch && viewModel.hasMore) {
             binding.fbStartStop.setImageResource(R.drawable.ic_play_24dp)
         } else {
