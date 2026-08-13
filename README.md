@@ -42,6 +42,13 @@ Legado is a free and open source novel reader for Android.
     <img src="https://img.shields.io/badge/-返回顶部-orange.svg" alt="#" align="right">
 </a>
 
+# 改版内容
+
+* 书源搜索改为可配置并发搜索，并显示已完成/总书源数；单个书源进入验证、失败或被跳过时不会阻塞其他书源。
+* 支持使用可配置的 OpenAI 兼容视觉模型自动识别并填入图片验证码，可在设置中开关并修改 API Key、模型 ID 和 Base URL；验证码图片仅写入应用私有缓存，识别完成后删除。
+* 同一批搜索最多显示一个交互式验证界面；弹出式网页验证界面 15 秒无操作时自动点击右上角对号，跳过当前书源。
+* 检测到书源需要登录或激活时，自动加入“需登录或激活”分组并禁用。
+
 # Community-交流社区 [![](https://img.shields.io/badge/-Community-F5F5F5.svg)](#Community-交流社区-)
 
 #### Other
