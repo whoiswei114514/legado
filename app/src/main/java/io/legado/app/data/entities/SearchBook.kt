@@ -58,8 +58,48 @@ data class SearchBook(
     @IgnoredOnParcel
     val origins: LinkedHashSet<String> by lazy { linkedSetOf(origin) }
 
+    /**
+     * 同名同作者的搜索结果合并后，保留每个书源返回的原始书籍结果。
+     *
+     * 该字段只用于当前进程内的搜索结果传递，不参与 Parcelable/JSON 持久化；
+     * 这样进入详情页时可以直接打开已经搜索到的书源，而不必再次发起搜索。
+     */
+    @delegate:Transient
+    @IgnoredOnParcel
+    private val sourceResults: LinkedHashMap<String, SearchBook> by lazy {
+        linkedMapOf()
+    }
+
     fun addOrigin(origin: String) {
-        origins.add(origin)
+        if (origin.isNotBlank()) synchronized(origins) {
+            origins.add(origin)
+        }
+    }
+
+    val originCount: Int
+        get() = synchronized(origins) { origins.size }
+
+    fun addSourceResult(book: SearchBook) {
+        synchronized(sourceResults) {
+            sourceResults[book.origin] = book.copy()
+        }
+        addOrigin(book.origin)
+    }
+
+    fun addSourceResults(books: Iterable<SearchBook>) {
+        books.forEach { addSourceResult(it) }
+    }
+
+    fun getSourceResults(): List<SearchBook> {
+        synchronized(sourceResults) {
+            if (sourceResults.isEmpty()) return listOf(copy())
+            return sourceResults.values.map { it.copy() }
+        }
+    }
+
+    /** 创建一个不会再和旧搜索快照共享来源状态的副本。 */
+    fun copyForSearch(): SearchBook {
+        return copy().also { it.addSourceResults(getSourceResults()) }
     }
 
     fun getDisplayLastChapterTitle(): String {
@@ -102,5 +142,6 @@ data class SearchBook(
     ).apply {
         this.infoHtml = this@SearchBook.infoHtml
         this.tocHtml = this@SearchBook.tocHtml
+        this.sourceBooks = this@SearchBook.getSourceResults()
     }
 }

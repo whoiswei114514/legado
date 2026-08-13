@@ -132,10 +132,15 @@ abstract class BaseReadViewModel(application: Application) : BaseViewModel(appli
             ?: if (book.isLocal) null else book.getBookSource()
         inBookshelf = !book.isNotShelf
         curBook = book
-        if (inBookshelf && isSearchBook) book =
-            appDb.bookDao.getBook(book.bookUrl)
-                ?: appDb.bookDao.getOnlineBook(book.name, book.author)
-                ?: book
+        if (inBookshelf && isSearchBook) {
+            appDb.bookDao.getBook(book.bookUrl)?.let { dbBook ->
+                if (dbBook.sourceBooks.isEmpty()) dbBook.sourceBooks = book.sourceBooks
+                book = dbBook
+            } ?: appDb.bookDao.getOnlineBook(book.name, book.author)?.let { dbBook ->
+                if (dbBook.sourceBooks.isEmpty()) dbBook.sourceBooks = book.sourceBooks
+                book = dbBook
+            }
+        }
         if (book.isRss) {
             book.tocUrl = book.bookUrl
             book.bookUrl = "data:"
@@ -281,13 +286,20 @@ abstract class BaseReadViewModel(application: Application) : BaseViewModel(appli
         changeSourceCoroutine?.cancel()
         changeSourceCoroutine = execute {
             curBookSource = source
-            curBook?.migrateTo(book, toc)
+            val oldBook = curBook
+            book.sourceBooks = linkedMapOf<String, SearchBook>().apply {
+                oldBook?.sourceBooks.orEmpty().forEach { put(it.origin, it) }
+                book.sourceBooks.forEach { put(it.origin, it) }
+                book.toSearchBook().getSourceResults().forEach { put(it.origin, it) }
+            }.values.toList()
+            oldBook?.migrateTo(book, toc)
             if (inBookshelf) {
                 book.removeType(BookType.updateError)
-                curBook?.delete()
+                oldBook?.delete()
                 appDb.bookDao.insert(book)
                 appDb.bookChapterDao.insert(*toc.toTypedArray())
             }
+            curBook = book
             chapterListData.postValue(toc)
             onSourceChanged(book, toc)
         }.onError {

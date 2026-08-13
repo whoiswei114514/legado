@@ -58,7 +58,7 @@ class SearchModel(private val scope: CoroutineScope, private val callBack: CallB
             if (mSearchId != 0L) {
                 close()
             }
-            searchBooks.clear()
+            searchBooks = arrayListOf()
             bookSources = callBack.getSearchScope().getBookSources()
             if (bookSources.isEmpty()) {
                 callBack.onSearchCancel(NoStackTraceException("启用书源为空"))
@@ -77,6 +77,10 @@ class SearchModel(private val scope: CoroutineScope, private val callBack: CallB
         val precision = appCtx.getPrefBoolean(PreferKey.precisionSearch)
         var hasMore = false
         val pool = searchPool ?: return
+        val searchId = mSearchId
+        val key = searchKey
+        val page = searchPage
+        val sessionBooks = searchBooks
         val activeSources = bookSources.filter { it.enabled }
         if (activeSources.isEmpty()) {
             callBack.onSearchCancel(NoStackTraceException("启用书源为空"))
@@ -98,10 +102,9 @@ class SearchModel(private val scope: CoroutineScope, private val callBack: CallB
                     try {
                         withTimeout(timeLimit) {
                             WebBook.getBookListAwait(
-                                bookSource, searchKey, searchPage,
+                                bookSource, key, page,
                                 filter = { name, author ->
-                                    !precision || name.contains(searchKey) ||
-                                        author.contains(searchKey)
+                                    !precision || name.contains(key) || author.contains(key)
                                 },
                                 onUrlResolved = if (isSingleSource) { analyzeUrl: AnalyzeUrl ->
                                     val options = parseExploreOptionsFromUrl(analyzeUrl.rawRuleUrl)
@@ -117,24 +120,31 @@ class SearchModel(private val scope: CoroutineScope, private val callBack: CallB
                         quarantineSourceWhenRequired(bookSource, error)
                         throw error
                     } finally {
-                        callBack.onSearchProgress(
-                            completedSources.incrementAndGet(),
-                            totalSources
-                        )
+                        val completed = completedSources.incrementAndGet()
+                        if (mSearchId == searchId) {
+                            callBack.onSearchProgress(completed, totalSources)
+                        }
                     }
                 }.onEach { items ->
+                    if (mSearchId != searchId) return@onEach
                     for (book in items) {
                         book.releaseHtmlData()
                     }
                     hasMore = hasMore || items.isNotEmpty()
-                    mergeItems(items, precision)
+                    mergeItems(sessionBooks, items, precision, key)
                     currentCoroutineContext().ensureActive()
-                    callBack.onSearchSuccess(searchBooks)
+                    if (mSearchId == searchId) {
+                        callBack.onSearchSuccess(sessionBooks.map { it.copyForSearch() })
+                    }
                 }.onCompletion {
-                    if (it == null) callBack.onSearchFinish(searchBooks.isEmpty(), hasMore)
+                    if (it == null && mSearchId == searchId) {
+                        callBack.onSearchFinish(sessionBooks.isEmpty(), hasMore)
+                    }
                 }.catch {
-                    AppLog.put("书源搜索出错\n${it.localizedMessage}", it)
-                    callBack.onSearchCancel(it)
+                    if (mSearchId == searchId) {
+                        AppLog.put("书源搜索出错\n${it.localizedMessage}", it)
+                        callBack.onSearchCancel(it)
+                    }
                 }.collect()
             } finally {
                 SourceVerificationHelp.endSearchSession()
@@ -149,7 +159,12 @@ class SearchModel(private val scope: CoroutineScope, private val callBack: CallB
         SourceAccountRequiredHelp.quarantine(source, message)
     }
 
-    private suspend fun mergeItems(newDataS: List<SearchBook>, precision: Boolean) {
+    private suspend fun mergeItems(
+        currentBooks: MutableList<SearchBook>,
+        newDataS: List<SearchBook>,
+        precision: Boolean,
+        keyWord: String
+    ) {
         if (newDataS.isEmpty()) return
 
         val equalData = LinkedHashMap<Pair<String, String>, SearchBook>()
@@ -159,8 +174,8 @@ class SearchModel(private val scope: CoroutineScope, private val callBack: CallB
         suspend fun merge(book: SearchBook, mergeOrigin: Boolean) {
             currentCoroutineContext().ensureActive()
             val target = when {
-                book.name == searchKey || book.author == searchKey -> equalData
-                book.name.contains(searchKey) || book.author.contains(searchKey) -> containsData
+                book.name == keyWord || book.author == keyWord -> equalData
+                book.name.contains(keyWord) || book.author.contains(keyWord) -> containsData
                 !precision -> otherData
                 else -> return
             }
@@ -168,22 +183,25 @@ class SearchModel(private val scope: CoroutineScope, private val callBack: CallB
             val previous = target[key]
             if (previous == null) {
                 target[key] = book
+                if (mergeOrigin) book.addSourceResult(book)
             } else if (mergeOrigin) {
-                previous.addOrigin(book.origin)
+                previous.addSourceResult(book)
             }
         }
 
-        searchBooks.forEach { merge(it, false) }
+        currentBooks.forEach { merge(it, false) }
         newDataS.forEach { merge(it, true) }
         currentCoroutineContext().ensureActive()
 
-        searchBooks = ArrayList<SearchBook>(
+        val mergedBooks = ArrayList<SearchBook>(
             equalData.size + containsData.size + if (precision) 0 else otherData.size
         ).apply {
-            addAll(equalData.values.sortedByDescending { it.origins.size })
-            addAll(containsData.values.sortedByDescending { it.origins.size })
+            addAll(equalData.values.sortedByDescending { it.originCount })
+            addAll(containsData.values.sortedByDescending { it.originCount })
             if (!precision) addAll(otherData.values)
         }
+        currentBooks.clear()
+        currentBooks.addAll(mergedBooks)
     }
 
     fun cancelSearch() {

@@ -39,7 +39,7 @@ class SearchAdapter(context: Context, val callBack: CallBack) :
 
             override fun getChangePayload(oldItem: SearchBook, newItem: SearchBook): Any {
                 val payload = Bundle()
-                payload.putInt("origins", newItem.origins.size)
+                payload.putInt("origins", newItem.originCount)
                 if (oldItem.coverUrl != newItem.coverUrl)
                     payload.putString("cover", newItem.coverUrl)
                 if (oldItem.kind != newItem.kind)
@@ -96,7 +96,7 @@ class SearchAdapter(context: Context, val callBack: CallBack) :
             tvName.text = searchBook.name
             tvAuthor.text = context.getString(R.string.author_show, searchBook.author)
             ivInBookshelf.isVisible = callBack.isInBookshelf(searchBook)
-            bvOriginCount.setBadgeCount(searchBook.origins.size)
+            bvOriginCount.setBadgeCount(searchBook.originCount)
             upLasted(binding, searchBook.latestChapterTitle)
             tvIntroduce.text = searchBook.trimIntro(context)
             upKind(binding, searchBook.getKindList())
@@ -115,7 +115,7 @@ class SearchAdapter(context: Context, val callBack: CallBack) :
         binding.run {
             bundle.keySet().forEach {
                 when (it) {
-                    "origins" -> bvOriginCount.setBadgeCount(searchBook.origins.size)
+                    "origins" -> bvOriginCount.setBadgeCount(searchBook.originCount)
                     "last" -> upLasted(binding, searchBook.latestChapterTitle)
                     "intro" -> tvIntroduce.text = searchBook.trimIntro(context)
                     "kind" -> upKind(binding, searchBook.getKindList())

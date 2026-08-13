@@ -571,15 +571,16 @@ class SearchActivity : VMBaseActivity<ActivityBookSearchBinding, SearchViewModel
      */
     override fun showBookInfo(book: BaseBook, isClick: Boolean) {
         searchView.clearFocus()
-        IntentData.book = book
+        val bookSnapshot = (book as? SearchBook)?.copyForSearch() ?: book
+        IntentData.book = bookSnapshot
         when {
             !isClick || !AppConfig.devFeat -> startActivity<BookInfoActivity> {
-                putExtra("name", book.name)
-                putExtra("author", book.author)
+                putExtra("name", bookSnapshot.name)
+                putExtra("author", bookSnapshot.author)
             }
 
-            book.isVideo -> startActivity<VideoPlayActivity>()
-            book.isRss -> startActivity<ReadRssActivity>()
+            bookSnapshot.isVideo -> startActivity<VideoPlayActivity>()
+            bookSnapshot.isRss -> startActivity<ReadRssActivity>()
             else -> startActivity<BookInfoActivity>()
         }
     }

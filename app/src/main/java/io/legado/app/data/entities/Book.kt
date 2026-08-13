@@ -155,6 +155,12 @@ data class Book(
     @IgnoredOnParcel
     var downloadUrls: List<String>? = null
 
+    /** 搜索结果合并后暂存的多书源结果，仅在当前进程内用于详情页/换源页。 */
+    @Transient
+    @Ignore
+    @IgnoredOnParcel
+    var sourceBooks: List<SearchBook> = emptyList()
+
     @Ignore
     @IgnoredOnParcel
     private var folderName: String? = null
@@ -325,6 +331,7 @@ data class Book(
     ).apply {
         this.infoHtml = this@Book.infoHtml
         this.tocHtml = this@Book.tocHtml
+        this.addSourceResults(this@Book.sourceBooks)
     }
 
     /**
