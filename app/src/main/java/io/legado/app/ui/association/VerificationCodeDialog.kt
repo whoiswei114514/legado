@@ -197,6 +197,15 @@ object VerificationCodeDialog {
                                 if (isDialogShowing()) {
                                     binding.verificationCode.setText(result)
                                     AppLog.put("验证码 AI 已自动填入: source=$displayName")
+                                    val submitted = binding.toolBar.menu.performIdentifierAction(
+                                        R.id.menu_ok,
+                                        0
+                                    )
+                                    if (submitted) {
+                                        AppLog.put("验证码 AI 已自动提交: source=$displayName")
+                                    } else {
+                                        AppLog.put("验证码 AI 自动提交失败: source=$displayName")
+                                    }
                                 }
                             } catch (error: CancellationException) {
                                 throw error

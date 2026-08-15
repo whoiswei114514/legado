@@ -99,6 +99,9 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
             .thenByDescending { it.chapterWordCount }.thenBy { it.originOrder }
     }
     private var task: Job? = null
+    private var prepareTask: Coroutine<Unit>? = null
+    @Volatile
+    private var searchRequested = false
     private val searchSessionId = AtomicLong()
     val bookMap = ConcurrentHashMap<String, Book>()
     val searchDataFlow = callbackFlow<List<SearchBook>> {
@@ -134,9 +137,7 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
 
     override fun onCleared() {
         searchSessionId.incrementAndGet()
-        task?.cancel()
-        searchPool?.close()
-        searchPool = null
+        stopSearchTask()
         super.onCleared()
     }
 
@@ -224,8 +225,9 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
      * 搜索书籍
      */
     fun startSearch() {
-        execute {
-            val sessionId = beginSearchSession()
+        val sessionId = beginSearchPreparation()
+        _changeSourceProgress.value = 0 to ""
+        prepareTask = execute {
             synchronized(searchBooksLock) { searchBooks.clear() }
             cachedSourceOrigins.clear()
             searchCallback?.upAdapter()
@@ -233,7 +235,6 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
             tocMap.clear()
             bookMap.clear()
             tocMapChapterCount = 0
-            _changeSourceProgress.value = 0 to ""
             val searchGroup = AppConfig.searchGroup
             val sources = if (searchGroup.isBlank()) {
                 appDb.bookSourceDao.allEnabled
@@ -252,12 +253,18 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
                 return@execute
             }
             search(sessionId, sources, pool)
+        }.onError {
+            if (searchSessionId.get() == sessionId) {
+                AppLog.put("换源搜索准备出错\n${it.localizedMessage}", it)
+            }
+        }.onFinally {
+            finishSearchPreparation(sessionId)
         }
     }
 
     fun startSearch(origin: String) {
-        execute {
-            val sessionId = beginSearchSession()
+        val sessionId = beginSearchPreparation()
+        prepareTask = execute {
             bookSources.clear()
             tocMap.clear()
             bookMap.clear()
@@ -276,6 +283,12 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
                 return@execute
             }
             search(sessionId, listOf(source), pool)
+        }.onError {
+            if (searchSessionId.get() == sessionId) {
+                AppLog.put("换源单书源搜索准备出错\n${it.localizedMessage}", it)
+            }
+        }.onFinally {
+            finishSearchPreparation(sessionId)
         }
     }
 
@@ -309,6 +322,7 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
             }.onCompletion {
                 ensureActive()
                 if (searchSessionId.get() == sessionId) {
+                    searchRequested = false
                     searchStateData.postValue(false)
                     searchFinishCallback?.invoke(searchBooksSnapshot().isEmpty())
                 }
@@ -427,8 +441,8 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
      * 刷新列表
      */
     fun startRefreshList(onlyRefreshNoWordCountBook: Boolean = false) {
-        execute {
-            val sessionId = beginSearchSession()
+        val sessionId = beginSearchPreparation()
+        prepareTask = execute {
             searchBookList.clear()
             synchronized(searchBooksLock) {
                 if (onlyRefreshNoWordCountBook) {
@@ -450,6 +464,12 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
                 return@execute
             }
             refreshList(sessionId, refreshBooks, pool)
+        }.onError {
+            if (searchSessionId.get() == sessionId) {
+                AppLog.put("换源刷新列表准备出错\n${it.localizedMessage}", it)
+            }
+        }.onFinally {
+            finishSearchPreparation(sessionId)
         }
     }
 
@@ -474,6 +494,7 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
                 }
             }.onCompletion {
                 if (searchSessionId.get() == sessionId) {
+                    searchRequested = false
                     searchStateData.postValue(false)
                 }
             }.catch {
@@ -495,10 +516,10 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
     }
 
     fun startOrStopSearch() {
-        if (task == null || !task!!.isActive) {
-            startSearch()
-        } else {
+        if (searchRequested || task?.isActive == true) {
             stopSearch()
+        } else {
+            startSearch()
         }
     }
 
@@ -508,10 +529,28 @@ open class ChangeBookSourceViewModel(application: Application) : BaseViewModel(a
     }
 
     private fun stopSearchTask() {
+        prepareTask?.cancel()
+        prepareTask = null
         task?.cancel()
+        task = null
         searchPool?.close()
         searchPool = null
+        searchRequested = false
         searchStateData.postValue(false)
+    }
+
+    private fun beginSearchPreparation(): Long {
+        val sessionId = beginSearchSession()
+        searchRequested = true
+        searchStateData.postValue(true)
+        return sessionId
+    }
+
+    private fun finishSearchPreparation(sessionId: Long) {
+        if (searchSessionId.get() == sessionId && task?.isActive != true) {
+            searchRequested = false
+            searchStateData.postValue(false)
+        }
     }
 
     private fun beginSearchSession(): Long {
